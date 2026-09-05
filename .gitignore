@@ -1,0 +1,48 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# Testing
+/coverage
+
+# Next.js build and cache
+/.next/
+/out/
+
+# Production build artifacts
+/build
+
+# SWC compiler cache
+/.swc/
+
+# Security & Environment Variables
+# (Never commit local secrets to version control)
+.env*.local
+.env.example
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Optional: Uncomment if you don't want to commit default env files
+# .env
+# .env.development
+# .env.production
+
+# Vercel deployment metadata
+.vercel
+
+# TypeScript build info
+*.tsbuildinfo
+next-env.d.ts
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# System & IDE files
+.DS_Store
+.vscode/
+.idea/
