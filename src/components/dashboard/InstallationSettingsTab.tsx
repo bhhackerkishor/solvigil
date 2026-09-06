@@ -1,12 +1,15 @@
 "use client";
 
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Save, MapPin, Loader2, CheckCircle2 } from "lucide-react";
+
+// IMPORTANT: Leaflet stylesheet must be imported for tile layout and controls
+import "leaflet/dist/leaflet.css";
 
 interface Installation {
   id: string;
@@ -68,6 +71,11 @@ export default function InstallationSettingsTab({
 
   const [hasSensor, setHasSensor] = useState(installation.hardwareIntegration.hasPhysicalIrradianceSensor);
   const [sensorDeviceId, setSensorDeviceId] = useState(installation.hardwareIntegration.sensorDeviceId || "");
+
+  const handleMapLocationSelect = useCallback((newLat: number, newLng: number) => {
+    setLatitude(String(newLat));
+    setLongitude(String(newLng));
+  }, []);
 
   const handleSave = useCallback(async () => {
     setIsSaving(true);
@@ -184,9 +192,13 @@ export default function InstallationSettingsTab({
             </div>
           </div>
 
-          {/* Mini map placeholder */}
-          <div className="relative h-48 rounded-lg border bg-muted/30 overflow-hidden flex items-center justify-center">
-            <MapPlaceholder lat={parseFloat(latitude) || 0} lng={parseFloat(longitude) || 0} />
+          {/* Interactive Map */}
+          <div className="relative h-64 rounded-lg border bg-muted/30 overflow-hidden">
+            <MapPlaceholder
+              lat={parseFloat(latitude) || 0}
+              lng={parseFloat(longitude) || 0}
+              onLocationSelect={handleMapLocationSelect}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -376,19 +388,31 @@ export default function InstallationSettingsTab({
   );
 }
 
-/** Simple map preview using Leaflet (client-only to avoid SSR issues) */
-function MapPlaceholder({ lat, lng }: { lat: number; lng: number }) {
+interface MapPlaceholderProps {
+  lat: number;
+  lng: number;
+  onLocationSelect: (lat: number, lng: number) => void;
+}
+
+/** Client-side Leaflet Map Component */
+function MapPlaceholder({ lat, lng, onLocationSelect }: MapPlaceholderProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
+  const markerRef = useRef<any>(null);
+  const onLocationSelectRef = useRef(onLocationSelect);
 
-  React.useEffect(() => {
+  // Keep callback reference updated without triggering re-initialization
+  useEffect(() => {
+    onLocationSelectRef.current = onLocationSelect;
+  }, [onLocationSelect]);
+
+  // Map Initialization (Runs Once)
+  useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
 
-    // Dynamic import to avoid SSR issues with Leaflet
     import("leaflet").then((L) => {
       if (!mapRef.current || mapInstanceRef.current) return;
 
-      // Fix default marker icon paths
       delete (L.Icon.Default.prototype as any)._getIconUrl;
       L.Icon.Default.mergeOptions({
         iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
@@ -396,8 +420,11 @@ function MapPlaceholder({ lat, lng }: { lat: number; lng: number }) {
         shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
       });
 
+      const initialLat = lat || 26.9124;
+      const initialLng = lng || 75.7873;
+
       const map = L.map(mapRef.current, {
-        center: [lat || 26.9124, lng || 75.7873],
+        center: [initialLat, initialLng],
         zoom: 13,
         zoomControl: true,
         attributionControl: false,
@@ -407,32 +434,54 @@ function MapPlaceholder({ lat, lng }: { lat: number; lng: number }) {
         attribution: "&copy; OpenStreetMap",
       }).addTo(map);
 
-      let marker = L.marker([lat || 26.9124, lng || 75.7873]).addTo(map);
+      const marker = L.marker([initialLat, initialLng], { draggable: true }).addTo(map);
+      markerRef.current = marker;
 
-      // Click to set new coordinates
+      const handleCoordChange = (latVal: number, lngVal: number) => {
+        const roundedLat = Math.round(latVal * 10000) / 10000;
+        const roundedLng = Math.round(lngVal * 10000) / 10000;
+        onLocationSelectRef.current(roundedLat, roundedLng);
+      };
+
+      // Click to place marker
       map.on("click", (e: L.LeafletMouseEvent) => {
         marker.setLatLng(e.latlng);
-        // Update the input fields
-        const latInput = document.getElementById("latitude") as HTMLInputElement;
-        const lngInput = document.getElementById("longitude") as HTMLInputElement;
-        if (latInput) latInput.value = String(Math.round(e.latlng.lat * 10000) / 10000);
-        if (lngInput) lngInput.value = String(Math.round(e.latlng.lng * 10000) / 10000);
-        latInput.dispatchEvent(new Event("input", { bubbles: true }));
-        lngInput.dispatchEvent(new Event("input", { bubbles: true }));
+        handleCoordChange(e.latlng.lat, e.latlng.lng);
+      });
+
+      // Drag marker to update
+      marker.on("dragend", () => {
+        const position = marker.getLatLng();
+        handleCoordChange(position.lat, position.lng);
       });
 
       mapInstanceRef.current = map;
 
-      // Fix Leaflet's container sizing
-      setTimeout(() => map.invalidateSize(), 100);
+      // Re-trigger layout calculations
+      setTimeout(() => map.invalidateSize(), 200);
     });
 
     return () => {
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
+        markerRef.current = null;
       }
     };
+  }, []);
+
+  // Synchronize Map View and Marker Position with State Changes
+  useEffect(() => {
+    if (!mapInstanceRef.current || !markerRef.current) return;
+    if (isNaN(lat) || isNaN(lng)) return;
+
+    const currentLatLng = markerRef.current.getLatLng();
+    if (currentLatLng.lat !== lat || currentLatLng.lng !== lng) {
+      markerRef.current.setLatLng([lat, lng]);
+      mapInstanceRef.current.setView([lat, lng], mapInstanceRef.current.getZoom(), {
+        animate: true,
+      });
+    }
   }, [lat, lng]);
 
   return <div ref={mapRef} className="h-full w-full rounded-lg z-0" />;

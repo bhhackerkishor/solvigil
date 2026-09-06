@@ -84,22 +84,25 @@ export default function SimulatorConsole() {
   const [results, setResults] = useState<IngestionResult[]>([]);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // API key per array — stored in memory, never persisted
+  // API key per array
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
   const [showKeyInput, setShowKeyInput] = useState<Record<string, boolean>>({});
   const [copiedKey, setCopiedKey] = useState(false);
 
+  const selectedArray = arrays.find((a) => a.id === selectedArrayId);
+  const currentApiKey = apiKeys[selectedArrayId] || "";
+
+  // Dynamic max output derived directly from selected array inverter specs
+  const maxCapacity = selectedArray?.inverterSpecs.maxCapacityKw || 10;
+
   const [telemetry, setTelemetry] = useState<TelemetryState>({
-    currentOutputKw: 4.2,
+    currentOutputKw: 0,
     irradiance: 800,
     efficiency: 0.92,
     inverterTempC: 42,
     voltage: 380,
-    current: 11.05,
+    current: 0,
   });
-
-  const selectedArray = arrays.find((a) => a.id === selectedArrayId);
-  const currentApiKey = apiKeys[selectedArrayId] || "";
 
   // Fetch available arrays
   useEffect(() => {
@@ -107,7 +110,6 @@ export default function SimulatorConsole() {
       try {
         const res = await fetch("/api/v1/simulator/my-arrays");
         const data = await res.json();
-        console.log(data)
         setArrays(data.arrays || []);
         if (data.arrays?.length > 0) {
           setSelectedArrayId(data.arrays[0].id);
@@ -121,22 +123,29 @@ export default function SimulatorConsole() {
     fetchArrays();
   }, []);
 
-  // Auto-calibrate telemetry defaults when array changes
+  // Auto-calibrate telemetry defaults whenever selected array changes
   useEffect(() => {
     if (!selectedArray) return;
     const panelCount = selectedArray.panelSpecs.panelCount;
     const wattage = selectedArray.panelSpecs.individualPanelWattage;
 
     const expectedDc = (panelCount * wattage) / 1000;
-    const expectedAc = (expectedDc * selectedArray.inverterSpecs.efficiency) / 100;
+    const eff = selectedArray.inverterSpecs.efficiency / 100;
+    const expectedAc = expectedDc * eff;
+
+    // Scale initial output dynamic to selected array capacity
+    const initialKw = Math.min(
+      Math.round(expectedAc * 0.85 * 100) / 100,
+      selectedArray.inverterSpecs.maxCapacityKw
+    );
 
     setTelemetry({
-      currentOutputKw: Math.round(expectedAc * 0.85 * 100) / 100,
+      currentOutputKw: initialKw,
       irradiance: 800,
-      efficiency: selectedArray.inverterSpecs.efficiency / 100,
+      efficiency: eff,
       inverterTempC: 42,
       voltage: 380,
-      current: Math.round(((expectedAc * 0.85 * 1000) / 380) * 100) / 100,
+      current: Math.round(((initialKw * 1000) / 380) * 100) / 100,
     });
   }, [selectedArray]);
 
@@ -225,23 +234,69 @@ export default function SimulatorConsole() {
     [sendTelemetry, intervalMs]
   );
 
-  // Apply a scenario preset
+  // Dynamically calculate scenario presets based on active array capacity
   const applyPreset = (preset: string) => {
+    const baseCap = selectedArray?.inverterSpecs.maxCapacityKw || 5;
+    const invEff = (selectedArray?.inverterSpecs.efficiency || 95) / 100;
+
     switch (preset) {
-      case "peak":
-        setTelemetry({ currentOutputKw: 4.5, irradiance: 1000, efficiency: 0.95, inverterTempC: 38, voltage: 385, current: 11.69 });
+      case "peak": {
+        const kw = Math.round(baseCap * 0.95 * 100) / 100;
+        setTelemetry({
+          currentOutputKw: kw,
+          irradiance: 1000,
+          efficiency: invEff,
+          inverterTempC: 38,
+          voltage: 385,
+          current: Math.round(((kw * 1000) / 385) * 100) / 100,
+        });
         break;
-      case "cloudy":
-        setTelemetry({ currentOutputKw: 1.8, irradiance: 350, efficiency: 0.88, inverterTempC: 30, voltage: 370, current: 4.86 });
+      }
+      case "cloudy": {
+        const kw = Math.round(baseCap * 0.35 * 100) / 100;
+        setTelemetry({
+          currentOutputKw: kw,
+          irradiance: 350,
+          efficiency: Math.round(invEff * 0.9 * 100) / 100,
+          inverterTempC: 30,
+          voltage: 370,
+          current: Math.round(((kw * 1000) / 370) * 100) / 100,
+        });
         break;
-      case "soiling":
-        setTelemetry({ currentOutputKw: 3.2, irradiance: 850, efficiency: 0.78, inverterTempC: 44, voltage: 375, current: 8.53 });
+      }
+      case "soiling": {
+        const kw = Math.round(baseCap * 0.65 * 100) / 100;
+        setTelemetry({
+          currentOutputKw: kw,
+          irradiance: 850,
+          efficiency: Math.round(invEff * 0.8 * 100) / 100,
+          inverterTempC: 44,
+          voltage: 375,
+          current: Math.round(((kw * 1000) / 375) * 100) / 100,
+        });
         break;
-      case "fault":
-        setTelemetry({ currentOutputKw: 0.5, irradiance: 900, efficiency: 0.15, inverterTempC: 55, voltage: 320, current: 1.56 });
+      }
+      case "fault": {
+        const kw = Math.round(baseCap * 0.1 * 100) / 100;
+        setTelemetry({
+          currentOutputKw: kw,
+          irradiance: 900,
+          efficiency: 0.15,
+          inverterTempC: 55,
+          voltage: 320,
+          current: Math.round(((kw * 1000) / 320) * 100) / 100,
+        });
         break;
+      }
       case "night":
-        setTelemetry({ currentOutputKw: 0, irradiance: 0, efficiency: 0, inverterTempC: 22, voltage: 0, current: 0 });
+        setTelemetry({
+          currentOutputKw: 0,
+          irradiance: 0,
+          efficiency: 0,
+          inverterTempC: 22,
+          voltage: 0,
+          current: 0,
+        });
         break;
     }
   };
@@ -276,7 +331,10 @@ export default function SimulatorConsole() {
                       <SelectItem key={arr.id} value={arr.id}>
                         <div className="flex items-center gap-2">
                           <span>{arr.systemName}</span>
-                          <Badge variant={apiKeys[arr.id] ? "success" : "outline"} className="text-[10px] px-1">
+                          <Badge
+                            variant={apiKeys[arr.id] ? "success" : "outline"}
+                            className="text-[10px] px-1"
+                          >
                             {apiKeys[arr.id] ? "Key Set" : "No Key"}
                           </Badge>
                         </div>
@@ -289,7 +347,6 @@ export default function SimulatorConsole() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Array Spec Summary */}
           {selectedArray && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
               <div>
@@ -299,13 +356,15 @@ export default function SimulatorConsole() {
               <div>
                 <p className="text-muted-foreground">Panels</p>
                 <p className="font-medium">
-                  {selectedArray.panelSpecs.panelCount} x {selectedArray.panelSpecs.individualPanelWattage}W
+                  {selectedArray.panelSpecs.panelCount} x{" "}
+                  {selectedArray.panelSpecs.individualPanelWattage}W
                 </p>
               </div>
               <div>
                 <p className="text-muted-foreground">Inverter</p>
                 <p className="font-medium">
-                  {selectedArray.inverterSpecs.brand} ({selectedArray.inverterSpecs.maxCapacityKw} kW)
+                  {selectedArray.inverterSpecs.brand} ({selectedArray.inverterSpecs.maxCapacityKw}{" "}
+                  kW)
                 </p>
               </div>
               <div>
@@ -367,14 +426,14 @@ export default function SimulatorConsole() {
                       setTimeout(() => setCopiedKey(false), 2000);
                     }}
                   >
-                    {copiedKey ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                    {copiedKey ? (
+                      <Check className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
                   </Button>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">
-                Find this key in Settings &gt; API Keys, or from the installation creation response.
-                It is never stored in your browser — only held in memory for this session.
-              </p>
             </div>
           )}
         </CardContent>
@@ -404,7 +463,7 @@ export default function SimulatorConsole() {
             </div>
           </CardHeader>
           <CardContent className="space-y-5">
-            {/* Power Output */}
+            {/* Output Power Slider */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label className="flex items-center gap-1.5 text-sm">
@@ -413,10 +472,19 @@ export default function SimulatorConsole() {
                 <span className="text-sm font-mono font-medium">{telemetry.currentOutputKw} kW</span>
               </div>
               <Slider
-                value={[telemetry.currentOutputKw]}
-                onValueChange={([v]) => setTelemetry((p) => ({ ...p, currentOutputKw: v }))}
+                value={[Math.min(telemetry.currentOutputKw, maxCapacity)]}
+                onValueChange={([v]) =>
+                  setTelemetry((p) => {
+                    const voltage = p.voltage || 380;
+                    return {
+                      ...p,
+                      currentOutputKw: v,
+                      current: Math.round(((v * 1000) / voltage) * 100) / 100,
+                    };
+                  })
+                }
                 min={0}
-                max={selectedArray?.inverterSpecs.maxCapacityKw || 10}
+                max={maxCapacity}
                 step={0.1}
               />
             </div>
@@ -482,7 +550,14 @@ export default function SimulatorConsole() {
                   type="number"
                   value={telemetry.voltage}
                   onChange={(e) =>
-                    setTelemetry((p) => ({ ...p, voltage: Number(e.target.value) }))
+                    setTelemetry((p) => ({
+                      ...p,
+                      voltage: Number(e.target.value),
+                      current:
+                        Number(e.target.value) > 0
+                          ? Math.round(((p.currentOutputKw * 1000) / Number(e.target.value)) * 100) / 100
+                          : 0,
+                    }))
                   }
                   min={0}
                   step={1}
@@ -504,7 +579,7 @@ export default function SimulatorConsole() {
           </CardContent>
         </Card>
 
-        {/* Execution & Results */}
+        {/* Execution & Results Log */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -538,7 +613,6 @@ export default function SimulatorConsole() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Send Button */}
             <Button
               onClick={handleSingleSend}
               disabled={isSimulating || !selectedArray || !hasKey}
@@ -559,7 +633,6 @@ export default function SimulatorConsole() {
               </p>
             )}
 
-            {/* Results Log */}
             <div className="space-y-2 max-h-[400px] overflow-y-auto">
               {results.length === 0 && (
                 <div className="text-center py-8 text-muted-foreground text-sm">

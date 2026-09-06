@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import dynamic from "next/dynamic";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -10,7 +11,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Sun, MapPin, Cpu, Zap, ChevronRight, ChevronLeft, Loader2 } from "lucide-react";
+import { Sun, MapPin, Cpu, Zap, ChevronRight, ChevronLeft, Loader2, Navigation, ExternalLink } from "lucide-react";
+
+// Dynamically import the map component with SSR disabled
+const LocationPickerMap = dynamic(() => import("./LocationPickerMap"), {
+  ssr: false,
+  loading: () => <div className="h-64 w-full bg-muted animate-pulse rounded-lg flex items-center justify-center text-sm text-muted-foreground">Loading Map...</div>,
+});
 
 const schemaStep1 = z.object({
   systemName: z.string().min(2, "System name must be at least 2 characters"),
@@ -31,7 +38,7 @@ const schemaStep2 = z.object({
 
 const schemaStep3 = z.object({
   inverterBrand: z.string().min(1, "Inverter brand is required"),
-   inverterMaxCapacityKw: z.number().min(0.5, "Minimum 0.5 kW"),
+  inverterMaxCapacityKw: z.number().min(0.5, "Minimum 0.5 kW"),
   inverterEfficiency: z.number().min(50).max(100),
   hasPhysicalIrradianceSensor: z.boolean(),
   sensorDeviceId: z.string().optional(),
@@ -47,6 +54,7 @@ export default function OnboardingWizard() {
   const [success, setSuccess] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState("");
+  const [isLocating, setIsLocating] = useState(false);
 
   const form1 = useForm<Step1Data>({
     resolver: zodResolver(schemaStep1),
@@ -81,6 +89,32 @@ export default function OnboardingWizard() {
       sensorDeviceId: "",
     },
   });
+
+  const currentLat = form1.watch("latitude");
+  const currentLng = form1.watch("longitude");
+
+  const handleGetCurrentLocation = () => {
+    if (typeof window === "undefined" || !navigator.geolocation) {
+      setError("Geolocation is not supported by your browser");
+      return;
+    }
+
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const lat = parseFloat(position.coords.latitude.toFixed(6));
+        const lng = parseFloat(position.coords.longitude.toFixed(6));
+        form1.setValue("latitude", lat, { shouldValidate: true });
+        form1.setValue("longitude", lng, { shouldValidate: true });
+        setIsLocating(false);
+      },
+      (err) => {
+        setError(`Unable to retrieve your location: ${err.message}`);
+        setIsLocating(false);
+      },
+      { enableHighAccuracy: true }
+    );
+  };
 
   const handleNext = async () => {
     if (step === 1) {
@@ -198,6 +232,46 @@ export default function OnboardingWizard() {
                 <p className="text-sm text-destructive">{form1.formState.errors.systemName.message}</p>
               )}
             </div>
+
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <Label>Interactive Location Picker</Label>
+                <div className="flex items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleGetCurrentLocation}
+                    disabled={isLocating}
+                  >
+                    {isLocating ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+                    ) : (
+                      <Navigation className="h-3.5 w-3.5 mr-1" />
+                    )}
+                    Use Current Location
+                  </Button>
+                  <a
+                    href={`https://www.openstreetmap.org/?mlat=${currentLat}&mlon=${currentLng}#map=16/${currentLat}/${currentLng}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-primary hover:underline flex items-center gap-1"
+                  >
+                    OpenStreetMaps <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              </div>
+
+              <LocationPickerMap
+                lat={currentLat || 28.6139}
+                lng={currentLng || 77.209}
+                onLocationSelect={(lat, lng) => {
+                  form1.setValue("latitude", lat, { shouldValidate: true });
+                  form1.setValue("longitude", lng, { shouldValidate: true });
+                }}
+              />
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="address">Address</Label>
               <Input id="address" placeholder="Full address" {...form1.register("address")} />
@@ -215,14 +289,24 @@ export default function OnboardingWizard() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="latitude">Latitude</Label>
-                <Input id="latitude" type="number" step="any" {...form1.register("latitude")} />
+                <Input
+                  id="latitude"
+                  type="number"
+                  step="any"
+                  {...form1.register("latitude", { valueAsNumber: true })}
+                />
                 {form1.formState.errors.latitude && (
                   <p className="text-sm text-destructive">{form1.formState.errors.latitude.message}</p>
                 )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="longitude">Longitude</Label>
-                <Input id="longitude" type="number" step="any" {...form1.register("longitude")} />
+                <Input
+                  id="longitude"
+                  type="number"
+                  step="any"
+                  {...form1.register("longitude", { valueAsNumber: true })}
+                />
                 {form1.formState.errors.longitude && (
                   <p className="text-sm text-destructive">{form1.formState.errors.longitude.message}</p>
                 )}
@@ -248,34 +332,43 @@ export default function OnboardingWizard() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="panelCount">Panel Count</Label>
-                <Input id="panelCount" type="number" {...form2.register("panelCount")} />
+                <Input id="panelCount" type="number" {...form2.register("panelCount", { valueAsNumber: true })} />
                 {form2.formState.errors.panelCount && (
                   <p className="text-sm text-destructive">{form2.formState.errors.panelCount.message}</p>
                 )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="individualPanelWattage">Individual Panel Wattage (W)</Label>
-                <Input id="individualPanelWattage" type="number" {...form2.register("individualPanelWattage")} />
+                <Input
+                  id="individualPanelWattage"
+                  type="number"
+                  {...form2.register("individualPanelWattage", { valueAsNumber: true })}
+                />
                 {form2.formState.errors.individualPanelWattage && (
                   <p className="text-sm text-destructive">{form2.formState.errors.individualPanelWattage.message}</p>
                 )}
               </div>
             </div>
             <div className="p-3 bg-muted rounded-lg text-sm">
-              Total Capacity: {((form2.watch("panelCount") || 0) * (form2.watch("individualPanelWattage") || 0) / 1000).toFixed(1)} kW
+              Total Capacity: {(((form2.watch("panelCount") || 0) * (form2.watch("individualPanelWattage") || 0)) / 1000).toFixed(1)} kW
             </div>
             <div className="space-y-2">
               <Label htmlFor="panelEfficiencyPercentage">Panel Efficiency (%)</Label>
-              <Input id="panelEfficiencyPercentage" type="number" step="0.1" {...form2.register("panelEfficiencyPercentage")} />
+              <Input
+                id="panelEfficiencyPercentage"
+                type="number"
+                step="0.1"
+                {...form2.register("panelEfficiencyPercentage", { valueAsNumber: true })}
+              />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="tiltAngle">Tilt Angle (deg)</Label>
-                <Input id="tiltAngle" type="number" step="1" {...form2.register("tiltAngle")} />
+                <Input id="tiltAngle" type="number" step="1" {...form2.register("tiltAngle", { valueAsNumber: true })} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="azimuthAngle">Azimuth Angle (deg, 180=South)</Label>
-                <Input id="azimuthAngle" type="number" step="1" {...form2.register("azimuthAngle")} />
+                <Input id="azimuthAngle" type="number" step="1" {...form2.register("azimuthAngle", { valueAsNumber: true })} />
               </div>
             </div>
           </CardContent>
@@ -301,12 +394,22 @@ export default function OnboardingWizard() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="inverterMaxCapacityKw">Inverter Max Capacity (kW)</Label>
-                <Input id="inverterMaxCapacityKw" type="number" step="0.1" {...form3.register("inverterMaxCapacityKw")} />
+                <Input
+                  id="inverterMaxCapacityKw"
+                  type="number"
+                  step="0.1"
+                  {...form3.register("inverterMaxCapacityKw", { valueAsNumber: true })}
+                />
               </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="inverterEfficiency">Inverter Efficiency (%)</Label>
-              <Input id="inverterEfficiency" type="number" step="0.1" {...form3.register("inverterEfficiency")} />
+              <Input
+                id="inverterEfficiency"
+                type="number"
+                step="0.1"
+                {...form3.register("inverterEfficiency", { valueAsNumber: true })}
+              />
             </div>
             <div className="flex items-center justify-between p-4 border rounded-lg">
               <div className="space-y-1">
