@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { signIn } from "next-auth/react"; // 1. Import signIn helper
+import { signIn } from "next-auth/react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,36 +13,38 @@ import { Sun, Loader2 } from "lucide-react";
 export default function AuthPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
+  const [statusText, setStatusText] = useState("");
   const [error, setError] = useState("");
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
     setError("");
+    setStatusText("Verifying credentials...");
 
     const formData = new FormData(e.currentTarget);
     const email = formData.get("email") as string;
     const password = formData.get("password") as string;
 
     try {
-      // 2. Let NextAuth natively manage the CSRF generation and redirect cycle
       const result = await signIn("credentials", {
         email,
         password,
-        redirect: false, // Prevents full page reload if login fails
+        redirect: false,
       });
 
       if (result?.error) {
         setError("Invalid email or password");
       } else {
-        // Successful login, direct them to dashboard safely
+        setStatusText("Login successful! Loading dashboard...");
         router.push("/dashboard");
-        router.refresh(); 
+        router.refresh();
       }
     } catch {
       setError("Login failed. Please try again.");
     } finally {
       setIsLoading(false);
+      setStatusText("");
     }
   };
 
@@ -50,6 +52,7 @@ export default function AuthPage() {
     e.preventDefault();
     setIsLoading(true);
     setError("");
+    setStatusText("Creating user account and organization...");
 
     const formData = new FormData(e.currentTarget);
     const name = formData.get("name") as string;
@@ -66,7 +69,8 @@ export default function AuthPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      // 3. Instead of window.location.reload(), auto-login the user immediately on success
+      setStatusText("Account created! Signing you in...");
+
       const result = await signIn("credentials", {
         email,
         password,
@@ -76,6 +80,7 @@ export default function AuthPage() {
       if (result?.error) {
         setError("Account created, but automatic sign-in failed. Please log in manually.");
       } else {
+        setStatusText("Redirecting to dashboard...");
         router.push("/dashboard");
         router.refresh();
       }
@@ -83,6 +88,7 @@ export default function AuthPage() {
       setError(err.message || "Registration failed");
     } finally {
       setIsLoading(false);
+      setStatusText("");
     }
   };
 
@@ -122,7 +128,7 @@ export default function AuthPage() {
                   {error && <p className="text-sm text-destructive">{error}</p>}
                   <Button type="submit" className="w-full" disabled={isLoading}>
                     {isLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                    Sign In
+                    {isLoading ? statusText : "Sign In"}
                   </Button>
                 </form>
               </CardContent>
@@ -152,7 +158,7 @@ export default function AuthPage() {
                   {error && <p className="text-sm text-destructive">{error}</p>}
                   <Button type="submit" className="w-full" disabled={isLoading}>
                     {isLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                    Create Account
+                    {isLoading ? statusText : "Create Account"}
                   </Button>
                 </form>
               </CardContent>

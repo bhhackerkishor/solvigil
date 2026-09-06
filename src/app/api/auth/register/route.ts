@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/mongodb";
 import { User } from "@/models/User";
+import { Organization } from "@/models/Organization";
 
 /**
  * POST /api/auth/register
- * Creates a new user account with hashed password.
+ * Creates a new user account with hashed password and initial Organization.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -26,7 +27,8 @@ export async function POST(request: NextRequest) {
 
     await connectToDatabase();
 
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = email.toLowerCase();
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return NextResponse.json(
         { error: "An account with this email already exists" },
@@ -34,11 +36,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 1. Generate organization name and unique slug
+    const orgName = `${name}'s Organization`;
+    const baseSlug = orgName
+      .toLowerCase()
+      .trim()
+      .replace(/[^\w\s-]/g, "")
+      .replace(/[\s_-]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    
+    const slug = `${baseSlug}-${Date.now().toString(36)}`;
+
+    // 2. Create the default organization
+    const organization = await Organization.create({
+      name: orgName,
+      slug,
+    });
+
+    // 3. Create the user with the generated organizationId
     const user = await User.create({
       name,
-      email: email.toLowerCase(),
+      email: normalizedEmail,
       password,
       role: "Owner",
+      organizationId: organization._id,
     });
 
     return NextResponse.json(
